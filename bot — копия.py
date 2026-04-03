@@ -1,10 +1,9 @@
-
 import time
 import os
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "2120083228:AAEorTnGXuMdTiby7h5UhsecG56oxKxFDA4")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "ВСТАВЬ_ТОКЕН_СЮДА")
 
 user_lang = {}
 user_history = {}
