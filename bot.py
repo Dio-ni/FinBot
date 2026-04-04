@@ -27,11 +27,11 @@ SEASON_COEFF = {
 }
 
 BASE_BILLS = [
-    {"key": "kaztel",   "ru": "Казахтелеком",  "kz": "Қазақтелеком",     "base": 8500, "vary": 0.15},
-    {"key": "electric", "ru": "Электроэнергия", "kz": "Электр энергиясы", "base": 7200, "vary": 0.40},
-    {"key": "water",    "ru": "Вода",           "kz": "Су",               "base": 3800, "vary": 0.25},
-    {"key": "gas",      "ru": "Газ",            "kz": "Газ",              "base": 5100, "vary": 0.40},
-    {"key": "garbage",  "ru": "Вывоз мусора",   "kz": "Қоқыс шығару",    "base": 1200, "vary": 0.23},
+    {"key": "kaztel",   "ru": "Казахтелеком",  "kz": "Қазақтелеком",     "base": 8500, "vary": 0.05},
+    {"key": "electric", "ru": "Электроэнергия", "kz": "Электр энергиясы", "base": 7200, "vary": 0.20},
+    {"key": "water",    "ru": "Вода",           "kz": "Су",               "base": 3800, "vary": 0.15},
+    {"key": "gas",      "ru": "Газ",            "kz": "Газ",              "base": 5100, "vary": 0.30},
+    {"key": "garbage",  "ru": "Вывоз мусора",   "kz": "Қоқыс шығару",    "base": 1200, "vary": 0.03},
 ]
 
 def generate_bills(month):
@@ -144,6 +144,7 @@ def kb_main(lang):
     if lang == "ru":
         return InlineKeyboardMarkup([
             [InlineKeyboardButton("🪪 Оплатить коммуналку ✅", callback_data="pay")],
+            [InlineKeyboardButton("🤖 AI-Автопилот",           callback_data="autopay")],
             [InlineKeyboardButton("💸 Оплатить кредит",        callback_data="wip_credit"),
              InlineKeyboardButton("🧾 Оплатить налоги",        callback_data="wip_tax")],
             [InlineKeyboardButton("🍔 Заказать еду",           callback_data="wip_food"),
@@ -154,6 +155,7 @@ def kb_main(lang):
         ])
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🪪 Коммуналды төлеу ✅",  callback_data="pay")],
+        [InlineKeyboardButton("🤖 AI-Автопилот",          callback_data="autopay")],
         [InlineKeyboardButton("💸 Несие төлеу",          callback_data="wip_credit"),
          InlineKeyboardButton("🧾 Салық төлеу",          callback_data="wip_tax")],
         [InlineKeyboardButton("🍔 Тамақ тапсырыс",       callback_data="wip_food"),
@@ -264,23 +266,39 @@ async def button(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         pending[uid] = bills
         total = sum(b["amount"] for b in bills)
 
-        msg = await q.message.reply_text(
-            "🤖 Анализирую ваши начисления..." if lang == "ru"
-            else "🤖 Есептеулеріңізді талдап жатырмын..."
-        )
-        await asyncio.sleep(5)
-
-        await msg.edit_text(
-            "🔍 Найдены актуальные начисления:" if lang == "ru"
-            else "🔍 Ағымдағы есептеулер табылды:"
-        )
-        await asyncio.sleep(3)
-
         month_names_ru = ["","Январь","Февраль","Март","Апрель","Май","Июнь",
                           "Июль","Август","Сентябрь","Октябрь","Ноябрь","Декабрь"]
         month_names_kz = ["","Қаңтар","Ақпан","Наурыз","Сәуір","Мамыр","Маусым",
                           "Шілде","Тамыз","Қыркүйек","Қазан","Қараша","Желтоқсан"]
 
+        # Шаг 1 — получаю данные
+        if lang == "ru":
+            msg = await q.message.reply_text("📡 Получаю данные...")
+        else:
+            msg = await q.message.reply_text("📡 Деректерді алып жатырмын...")
+        await asyncio.sleep(3.0)
+
+        # Шаг 2 — актуальные данные
+        if lang == "ru":
+            await msg.edit_text("📡 Получаю актуальные данные...")
+        else:
+            await msg.edit_text("📡 Өзекті деректерді алып жатырмын...")
+        await asyncio.sleep(2.0)
+
+        # Шаг 3 — анализ на основе истории
+        if lang == "ru":
+            await msg.edit_text(
+                "📊 На основе ваших прошлых платежей и текущих начислений:\n\n"
+                "Я нашёл актуальные платежи и подготовил их к оплате 👇"
+            )
+        else:
+            await msg.edit_text(
+                "📊 Өткен төлемдеріңіз бен ағымдағы есептеулер негізінде:\n\n"
+                "Өзекті төлемдерді таптым және төлеуге дайындадым 👇"
+            )
+        await asyncio.sleep(1.5)
+
+        # Шаг 4 — список счетов
         if lang == "ru":
             lines     = "\n".join(f"• {b['ru']} — {money(b['amount'])}" for b in bills)
             header    = f"📋 {month_names_ru[month]} {datetime.now().year}"
@@ -327,7 +345,38 @@ async def button(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                        f"Сома: {money(total)}\nКүні: {date}\nМәртебе: Орындалды ✅\n\n"
                        f"Төлегеніңізге рахмет! 🤖")
 
-        await q.message.reply_text(receipt, reply_markup=kb_main(lang))
+        await q.message.reply_text(receipt)
+        await asyncio.sleep(0.5)
+
+        # Предложение автооплаты после успешного платежа
+        if lang == "ru":
+            autopay_offer = (
+                "🤖 Кстати, я могу делать это автоматически каждый месяц\n\n"
+                "Включить AI-автопилот — и я буду сам:\n"
+                "• проверять начисления\n"
+                "• оплачивать в нужный день\n"
+                "• присылать квитанцию вам 📲"
+            )
+        else:
+            autopay_offer = (
+                "🤖 Айтпақшы, мен мұны әр ай автоматты түрде жасай аламын\n\n"
+                "AI-Автопилотты қосыңыз — мен өзім:\n"
+                "• есептеулерді тексеремін\n"
+                "• қажетті күні төлеймін\n"
+                "• сізге түбіртек жіберемін 📲"
+            )
+
+        kb_autopay_offer = InlineKeyboardMarkup([
+            [InlineKeyboardButton(
+                "🤖 Включить AI-автопилот" if lang == "ru" else "🤖 AI-Автопилотты қосу",
+                callback_data="autopay"
+            )],
+            [InlineKeyboardButton(
+                "Не сейчас" if lang == "ru" else "Қазір емес",
+                callback_data="back"
+            )],
+        ])
+        await q.message.reply_text(autopay_offer, reply_markup=kb_autopay_offer)
 
     # ── ОТМЕНА ────────────────────────────
     elif data == "cancel":
@@ -357,6 +406,76 @@ async def button(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             header = "📊 История платежей:\n\n" if lang == "ru" else "📊 Төлемдер тарихы:\n\n"
             text   = header + "\n".join(lines)
         await q.message.reply_text(text, reply_markup=kb_back(lang))
+
+    # ── AI-АВТОПИЛОТ ──────────────────────
+    elif data == "autopay":
+        if lang == "ru":
+            msg = await q.message.reply_text("🤖 Настраиваю AI-автопилот...")
+        else:
+            msg = await q.message.reply_text("🤖 AI-Автопилотты баптап жатырмын...")
+        await asyncio.sleep(1.5)
+
+        if lang == "ru":
+            await msg.edit_text("🔍 Анализирую ваши платежи за последние месяцы...")
+        else:
+            await msg.edit_text("🔍 Соңғы айлардағы төлемдеріңізді талдап жатырмын...")
+        await asyncio.sleep(2.0)
+
+        if lang == "ru":
+            text = (
+                "✅ AI-Автопилот активирован!\n\n"
+                "Я буду автоматически:\n\n"
+                "📅 Каждое 1-е число месяца:\n"
+                "   └ Проверять новые начисления\n\n"
+                "💳 После проверки:\n"
+                "   └ Оплачивать все счета за вас\n\n"
+                "📲 Сразу после оплаты:\n"
+                "   └ Присылать квитанцию сюда\n\n"
+                "🔔 Вы можете отменить автопилот в любой момент\n\n"
+                "─────────────────────────\n"
+                "🤖 Вам больше не нужно думать о коммуналке"
+            )
+        else:
+            text = (
+                "✅ AI-Автопилот іске қосылды!\n\n"
+                "Мен автоматты түрде:\n\n"
+                "📅 Әр айдың 1-і күні:\n"
+                "   └ Жаңа есептеулерді тексеремін\n\n"
+                "💳 Тексергеннен кейін:\n"
+                "   └ Барлық шоттарды сіздің орныңызға төлеймін\n\n"
+                "📲 Төлемнен кейін бірден:\n"
+                "   └ Түбіртекті осында жіберемін\n\n"
+                "🔔 Автопилотты кез келген уақытта өшіре аласыз\n\n"
+                "─────────────────────────\n"
+                "🤖 Енді коммуналка туралы ойланудың қажеті жоқ"
+            )
+
+        kb_autopay_active = InlineKeyboardMarkup([
+            [InlineKeyboardButton(
+                "🔴 Отключить автопилот" if lang == "ru" else "🔴 Автопилотты өшіру",
+                callback_data="autopay_off"
+            )],
+            [InlineKeyboardButton(
+                "◀️ Назад" if lang == "ru" else "◀️ Артқа",
+                callback_data="back"
+            )],
+        ])
+        await msg.edit_text(text, reply_markup=kb_autopay_active)
+
+    elif data == "autopay_off":
+        if lang == "ru":
+            text = (
+                "🔴 Автопилот отключён\n\n"
+                "Вы всегда можете включить его снова — "
+                "и я возьму рутину на себя 🤖"
+            )
+        else:
+            text = (
+                "🔴 Автопилот өшірілді\n\n"
+                "Оны кез келген уақытта қайта қоса аласыз — "
+                "мен күнделікті жұмысты өз мойныма аламын 🤖"
+            )
+        await q.message.reply_text(text, reply_markup=kb_main(lang))
 
     # ── СТАТИСТИКА ────────────────────────
     elif data == "stats":
