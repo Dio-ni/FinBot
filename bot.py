@@ -273,7 +273,7 @@ async def button(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
         # Шаг 1 — получаю данные
         if lang == "ru":
-            msg = await q.message.reply_text("📡 Получаю данные...")
+            msg = await q.message.reply_text("🤖 Анализирую ваши начисления...")
         else:
             msg = await q.message.reply_text("📡 Деректерді алып жатырмын...")
         await asyncio.sleep(3.0)
@@ -287,12 +287,12 @@ async def button(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
         # Шаг 3 — анализ на основе истории
         if lang == "ru":
-            await msg.edit_text(
+            await msg.reply_text(
                 "📊 На основе ваших прошлых платежей и текущих начислений:\n\n"
                 "Я нашёл актуальные платежи и подготовил их к оплате 👇"
             )
         else:
-            await msg.edit_text(
+            await msg.reply_text(
                 "📊 Өткен төлемдеріңіз бен ағымдағы есептеулер негізінде:\n\n"
                 "Өзекті төлемдерді таптым және төлеуге дайындадым 👇"
             )
