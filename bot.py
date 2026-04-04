@@ -268,13 +268,13 @@ async def button(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             "🤖 Анализирую ваши начисления..." if lang == "ru"
             else "🤖 Есептеулеріңізді талдап жатырмын..."
         )
-        await asyncio.sleep(3)
+        await asyncio.sleep(5)
 
         await msg.edit_text(
             "🔍 Найдены актуальные начисления:" if lang == "ru"
             else "🔍 Ағымдағы есептеулер табылды:"
         )
-        await asyncio.sleep(2)
+        await asyncio.sleep(3)
 
         month_names_ru = ["","Январь","Февраль","Март","Апрель","Май","Июнь",
                           "Июль","Август","Сентябрь","Октябрь","Ноябрь","Декабрь"]
