@@ -34,7 +34,16 @@ BASE_BILLS = [
     {"key": "gas",      "ru": "Газ",            "kz": "Газ",                 "base": 3800, "vary": 0.15},
     {"key": "garbage",  "ru": "Вывоз мусора",   "kz": "Қоқыс шығару",    "base": 1200, "vary": 0.03},
 ]
+def kb_start_entry():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🚀 Начать демо", callback_data="start_demo")],
+        [InlineKeyboardButton("🔍 Проверить подписку", callback_data="check_sub")],
+    ])
 
+def kb_continue():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("➡️ Продолжить", callback_data="continue")]
+    ])
 def generate_bills(month):
     coeff = SEASON_COEFF[month]
     bills = []
@@ -312,8 +321,10 @@ async def show_subscribe_screen(message, lang, user_row=None):
 
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "👋 Добро пожаловать!\n\nВыберите язык:\nТілді таңдаңыз:",
-        reply_markup=kb_lang()
+        "🤖 Добро пожаловать!\n\n"
+        "Я ваш AI-ассистент для автоматических платежей\n\n"
+        "Выберите действие:",
+        reply_markup=kb_start_entry()
     )
 
 async def button(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -323,7 +334,34 @@ async def button(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     uname = q.from_user.username or q.from_user.first_name or ""
     lang  = ctx.user_data.get("lang", "ru")
     data  = q.data
+    # ── СТАРТОВЫЙ ЭКРАН ─────────────────────
 
+    if data == "start_demo":
+        await q.message.reply_text(
+            "🧪 Вы выбрали демо-режим\n\n"
+            "Можно протестировать все функции в режиме симуляции",
+            reply_markup=kb_continue()
+        )
+
+    elif data == "check_sub":
+        await q.message.reply_text(
+            "🔍 Проверяю подписку..."
+        )
+        await asyncio.sleep(1.5)
+
+        await q.message.reply_text(
+            "❌ Подписка не найдена\n\n"
+            "Вы можете продолжить в демо-режиме",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🚀 Продолжить с демо", callback_data="start_demo")]
+            ])
+        )
+
+    elif data == "continue":
+        await q.message.reply_text(
+            "🌐 Выберите язык:\nТілді таңдаңыз:",
+            reply_markup=kb_lang()
+        )
     # ── ЯЗЫК ──────────────────────────────
     if data in ("lang_ru", "lang_kz"):
         lang = "ru" if data == "lang_ru" else "kz"
