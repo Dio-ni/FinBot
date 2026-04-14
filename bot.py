@@ -36,7 +36,7 @@ BASE_BILLS = [
 ]
 def kb_start_entry():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🚀 Начать демо", callback_data="start_demo")],
+        [InlineKeyboardButton("🚀 Начать демо", callback_data="continue")],
         [InlineKeyboardButton("🔍 Проверить подписку", callback_data="check_sub")],
     ])
 
@@ -353,7 +353,7 @@ async def button(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             "❌ Подписка не найдена\n\n"
             "Вы можете продолжить в демо-режиме",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🚀 Продолжить с демо", callback_data="start_demo")]
+                [InlineKeyboardButton("🚀 Продолжить с демо", callback_data="continue")]
             ])
         )
 
@@ -382,10 +382,10 @@ async def button(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             await q.edit_message_text(text, reply_markup=kb_main(lang))
         else:
             # Показываем экран подписки
-            left = trials_left(user_row)
+            lleft = None
             text = greeting + subscribe_screen_text(lang, user_row)
             await q.edit_message_text(text, reply_markup=kb_subscribe(lang, left))
-
+        return
     # ── ПОДПИСКА (ЗАГЛУШКА) ───────────────
     elif data == "subscribe":
         if lang == "ru":
