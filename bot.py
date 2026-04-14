@@ -15,6 +15,8 @@ log = logging.getLogger(__name__)
 BOT_TOKEN    = os.environ["BOT_TOKEN"]
 DATABASE_URL = os.environ["DATABASE_URL"]
 
+FREE_TRIAL_LIMIT = 3   # сколько раз можно использовать бесплатно
+
 # ─────────────────────────────────────────
 # РЕАЛИСТИЧНЫЕ СУММЫ (сезонность)
 # ─────────────────────────────────────────
@@ -27,10 +29,10 @@ SEASON_COEFF = {
 }
 
 BASE_BILLS = [
-    {"key": "kaztel",   "ru": "Казахтелеком",  "kz": "Қазақтелеком",     "base": 8500, "vary": 0.05},
+    {"key": "kaztel",   "ru": "АО Казахтелеком",  "kz": "АО Қазақтелеком",     "base": 8500, "vary": 0.05},
     {"key": "electric", "ru": "Электроэнергия", "kz": "Электр энергиясы", "base": 7200, "vary": 0.20},
-    {"key": "water",    "ru": "Вода",           "kz": "Су",               "base": 3800, "vary": 0.15},
-    {"key": "gas",      "ru": "Газ",            "kz": "Газ",              "base": 5100, "vary": 0.30},
+    {"key": "water",    "ru": "Вода",           "kz": "Су",            "base": 5100, "vary": 0.30},
+    {"key": "gas",      "ru": "Газ",            "kz": "Газ",                 "base": 3800, "vary": 0.15},
     {"key": "garbage",  "ru": "Вывоз мусора",   "kz": "Қоқыс шығару",    "base": 1200, "vary": 0.03},
 ]
 
@@ -74,11 +76,19 @@ def init_db():
     """)
     cur.execute("""
         CREATE TABLE IF NOT EXISTS users (
-            user_id    BIGINT PRIMARY KEY,
-            username   TEXT,
-            lang       TEXT DEFAULT 'ru',
-            created_at TEXT NOT NULL
+            user_id      BIGINT PRIMARY KEY,
+            username     TEXT,
+            lang         TEXT    DEFAULT 'ru',
+            created_at   TEXT    NOT NULL,
+            subscribed   BOOLEAN DEFAULT FALSE,
+            trial_used   INTEGER DEFAULT 0
         )
+    """)
+    # Добавляем колонки если их нет (миграция для существующих баз)
+    cur.execute("""
+        ALTER TABLE users
+        ADD COLUMN IF NOT EXISTS subscribed BOOLEAN DEFAULT FALSE,
+        ADD COLUMN IF NOT EXISTS trial_used INTEGER DEFAULT 0
     """)
     conn.commit()
     conn.close()
@@ -88,12 +98,40 @@ def upsert_user(uid, username, lang):
     conn = get_db()
     cur  = conn.cursor()
     cur.execute("""
-        INSERT INTO users (user_id, username, lang, created_at)
-        VALUES (%s, %s, %s, %s)
+        INSERT INTO users (user_id, username, lang, created_at, subscribed, trial_used)
+        VALUES (%s, %s, %s, %s, FALSE, 0)
         ON CONFLICT (user_id) DO UPDATE SET username=%s, lang=%s
     """, (uid, username or "", lang, today(), username or "", lang))
     conn.commit()
     conn.close()
+
+def get_user(uid):
+    conn = get_db()
+    cur  = conn.cursor()
+    cur.execute("SELECT * FROM users WHERE user_id = %s", (uid,))
+    row = cur.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+def set_subscribed(uid):
+    conn = get_db()
+    cur  = conn.cursor()
+    cur.execute("UPDATE users SET subscribed = TRUE WHERE user_id = %s", (uid,))
+    conn.commit()
+    conn.close()
+
+def increment_trial(uid):
+    """Увеличивает счётчик использований пробного периода. Возвращает новое значение."""
+    conn = get_db()
+    cur  = conn.cursor()
+    cur.execute("""
+        UPDATE users SET trial_used = trial_used + 1
+        WHERE user_id = %s RETURNING trial_used
+    """, (uid,))
+    row = cur.fetchone()
+    conn.commit()
+    conn.close()
+    return row["trial_used"] if row else 1
 
 def save_payment(uid, username, lang, bills, total):
     import json
@@ -131,6 +169,27 @@ def get_stats(uid):
     return dict(row) if row else {}
 
 # ─────────────────────────────────────────
+# ACCESS CHECK
+# ─────────────────────────────────────────
+
+def has_access(user_row):
+    """Возвращает True если у пользователя есть доступ (подписка или пробный лимит не исчерпан)."""
+    if not user_row:
+        return False
+    if user_row.get("subscribed"):
+        return True
+    return (user_row.get("trial_used") or 0) < FREE_TRIAL_LIMIT
+
+def is_subscribed(user_row):
+    return user_row and user_row.get("subscribed", False)
+
+def trials_left(user_row):
+    if not user_row:
+        return 0
+    used = user_row.get("trial_used") or 0
+    return max(0, FREE_TRIAL_LIMIT - used)
+
+# ─────────────────────────────────────────
 # KEYBOARDS
 # ─────────────────────────────────────────
 
@@ -139,6 +198,23 @@ def kb_lang():
         InlineKeyboardButton("🇷🇺 Русский", callback_data="lang_ru"),
         InlineKeyboardButton("🇰🇿 Қазақша", callback_data="lang_kz"),
     ]])
+
+def kb_subscribe(lang, trial_left=None):
+    """Экран подписки. trial_left=None — пробный период ещё не использовался."""
+    buttons = [
+        [InlineKeyboardButton(
+            "💎 Оформить подписку" if lang == "ru" else "💎 Жазылым рәсімдеу",
+            callback_data="subscribe"
+        )],
+    ]
+    if trial_left is None or trial_left > 0:
+        left_str = f" ({trial_left} из {FREE_TRIAL_LIMIT})" if trial_left is not None else f" ({FREE_TRIAL_LIMIT} раза)"
+        left_str_kz = f" ({trial_left} / {FREE_TRIAL_LIMIT})" if trial_left is not None else f" ({FREE_TRIAL_LIMIT} рет)"
+        buttons.append([InlineKeyboardButton(
+            f"🆓 Попробовать бесплатно{left_str}" if lang == "ru" else f"🆓 Тегін көріп көру{left_str_kz}",
+            callback_data="trial"
+        )])
+    return InlineKeyboardMarkup(buttons)
 
 def kb_main(lang):
     if lang == "ru":
@@ -191,6 +267,15 @@ def kb_show_utility(lang):
         [InlineKeyboardButton("◀️ Артқа", callback_data="back")],
     ])
 
+def kb_paywall(lang):
+    """Клавиатура после исчерпания пробного периода."""
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton(
+            "💎 Оформить подписку" if lang == "ru" else "💎 Жазылым рәсімдеу",
+            callback_data="subscribe"
+        )
+    ]])
+
 # ─────────────────────────────────────────
 # WIP — ответы витрины
 # ─────────────────────────────────────────
@@ -221,6 +306,68 @@ WIP_TEXTS = {
 pending = {}
 
 # ─────────────────────────────────────────
+# HELPERS
+# ─────────────────────────────────────────
+
+def subscribe_screen_text(lang, user_row=None):
+    """Текст экрана подписки."""
+    left = trials_left(user_row) if user_row else FREE_TRIAL_LIMIT
+    if lang == "ru":
+        base = (
+            "🤖 Ваш персональный AI-ассистент\n\n"
+            "Я автоматически:\n"
+            "• Оплачиваю коммунальные услуги\n"
+            "• Слежу за начислениями\n"
+            "• Напоминаю о платежах\n"
+            "• Храню историю и квитанции\n\n"
+            "─────────────────────────\n"
+            "💎 Подписка — полный доступ ко всем функциям\n"
+        )
+        if left > 0:
+            base += f"🆓 Пробный период — {left} бесплатных использования"
+        else:
+            base += "⚠️ Пробный период исчерпан\n\nОформите подписку для продолжения работы"
+        return base
+    else:
+        base = (
+            "🤖 Сіздің жеке AI-көмекшіңіз\n\n"
+            "Мен автоматты түрде:\n"
+            "• Коммуналдық қызметтерді төлеймін\n"
+            "• Есептеулерді қадағалаймын\n"
+            "• Төлемдер туралы ескертемін\n"
+            "• Тарих пен түбіртектерді сақтаймын\n\n"
+            "─────────────────────────\n"
+            "💎 Жазылым — барлық функцияларға толық қолжетімділік\n"
+        )
+        if left > 0:
+            base += f"🆓 Сынақ кезеңі — {left} тегін пайдалану"
+        else:
+            base += "⚠️ Сынақ кезеңі аяқталды\n\nЖұмысты жалғастыру үшін жазылымды рәсімдеңіз"
+        return base
+
+async def show_subscribe_screen(message, lang, user_row=None):
+    """Отправляет экран подписки новым сообщением."""
+    left = trials_left(user_row) if user_row else FREE_TRIAL_LIMIT
+    text = subscribe_screen_text(lang, user_row)
+    await message.reply_text(text, reply_markup=kb_subscribe(lang, left if user_row else None))
+
+async def show_paywall(message, lang):
+    """Экран блокировки после исчерпания пробного периода."""
+    if lang == "ru":
+        text = (
+            "🔒 Пробный период исчерпан\n\n"
+            f"Вы использовали все {FREE_TRIAL_LIMIT} бесплатных попытки.\n\n"
+            "Оформите подписку, чтобы продолжить пользоваться ботом 🤖"
+        )
+    else:
+        text = (
+            "🔒 Сынақ кезеңі аяқталды\n\n"
+            f"Сіз {FREE_TRIAL_LIMIT} тегін мүмкіндікті пайдаландыңыз.\n\n"
+            "Ботты пайдалануды жалғастыру үшін жазылымды рәсімдеңіз 🤖"
+        )
+    await message.reply_text(text, reply_markup=kb_paywall(lang))
+
+# ─────────────────────────────────────────
 # HANDLERS
 # ─────────────────────────────────────────
 
@@ -243,16 +390,74 @@ async def button(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         lang = "ru" if data == "lang_ru" else "kz"
         ctx.user_data["lang"] = lang
         upsert_user(uid, uname, lang)
+        user_row = get_user(uid)
+
         if lang == "ru":
-            text = "✅ Язык выбран: Русский\n\nЯ ваш персональный AI-ассистент 🤖\nЧем могу помочь?"
+            greeting = "✅ Язык выбран: Русский\n\n"
         else:
-            text = "✅ Тіл таңдалды: Қазақша\n\nМен сіздің жеке AI-көмекшіңізбін 🤖\nҚалай көмектесе аламын?"
-        await q.edit_message_text(text, reply_markup=kb_main(lang))
+            greeting = "✅ Тіл таңдалды: Қазақша\n\n"
+
+        # Если уже подписан — сразу в главное меню
+        if is_subscribed(user_row):
+            text = greeting + ("Я ваш персональный AI-ассистент 🤖\nЧем могу помочь?"
+                               if lang == "ru" else
+                               "Мен сіздің жеке AI-көмекшіңізбін 🤖\nҚалай көмектесе аламын?")
+            await q.edit_message_text(text, reply_markup=kb_main(lang))
+        else:
+            # Показываем экран подписки
+            left = trials_left(user_row)
+            text = greeting + subscribe_screen_text(lang, user_row)
+            await q.edit_message_text(text, reply_markup=kb_subscribe(lang, left))
+
+    # ── ПОДПИСКА (ЗАГЛУШКА) ───────────────
+    elif data == "subscribe":
+        if lang == "ru":
+            text = (
+                "💎 Оформление подписки\n\n"
+                "Здесь будет интеграция с платёжной системой.\n\n"
+                "✅ Подписка успешно оформлена!\n\n"
+                "Теперь у вас есть полный доступ ко всем функциям 🤖"
+            )
+        else:
+            text = (
+                "💎 Жазылымды рәсімдеу\n\n"
+                "Мұнда төлем жүйесімен интеграция болады.\n\n"
+                "✅ Жазылым сәтті рәсімделді!\n\n"
+                "Енді барлық функцияларға толық қолжетімділігіңіз бар 🤖"
+            )
+        set_subscribed(uid)
+        await q.message.reply_text(text, reply_markup=kb_main(lang))
+
+    # ── ПРОБНЫЙ ПЕРИОД ────────────────────
+    elif data == "trial":
+        user_row = get_user(uid)
+        left = trials_left(user_row)
+        if left <= 0:
+            await show_paywall(q.message, lang)
+            return
+
+        if lang == "ru":
+            text = (
+                f"🆓 Пробный режим активирован\n\n"
+                f"Осталось использований: {left} из {FREE_TRIAL_LIMIT}\n\n"
+                "Я ваш персональный AI-ассистент 🤖\nЧем могу помочь?"
+            )
+        else:
+            text = (
+                f"🆓 Сынақ режимі іске қосылды\n\n"
+                f"Қалған пайдаланулар: {left} / {FREE_TRIAL_LIMIT}\n\n"
+                "Мен сіздің жеке AI-көмекшіңізбін 🤖\nҚалай көмектесе аламын?"
+            )
+        await q.message.reply_text(text, reply_markup=kb_main(lang))
 
     # ── НАЗАД ─────────────────────────────
     elif data == "back":
-        text = "Чем могу помочь?" if lang == "ru" else "Қалай көмектесе аламын?"
-        await q.edit_message_text(text, reply_markup=kb_main(lang))
+        user_row = get_user(uid)
+        if is_subscribed(user_row):
+            text = "Чем могу помочь?" if lang == "ru" else "Қалай көмектесе аламын?"
+            await q.message.reply_text(text, reply_markup=kb_main(lang))
+        else:
+            await show_subscribe_screen(q.message, lang, user_row)
 
     # ── ВИТРИНА WIP ───────────────────────
     elif data in WIP_TEXTS:
@@ -261,6 +466,24 @@ async def button(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     # ── ОПЛАТА КОММУНАЛКИ ─────────────────
     elif data == "pay":
+        user_row = get_user(uid)
+
+        # Проверка доступа
+        if not has_access(user_row):
+            await show_paywall(q.message, lang)
+            return
+
+        # Если не подписан — списываем одну попытку
+        if not is_subscribed(user_row):
+            new_used = increment_trial(uid)
+            left_after = FREE_TRIAL_LIMIT - new_used
+            user_row = get_user(uid)   # обновляем после инкремента
+            if lang == "ru":
+                trial_notice = f"🆓 Пробное использование: {new_used} из {FREE_TRIAL_LIMIT}"
+            else:
+                trial_notice = f"🆓 Сынақ пайдаланылуы: {new_used} / {FREE_TRIAL_LIMIT}"
+            await q.message.reply_text(trial_notice)
+
         month = datetime.now().month
         bills = generate_bills(month)
         pending[uid] = bills
@@ -285,7 +508,7 @@ async def button(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             await msg.edit_text("📡 Өзекті деректерді алып жатырмын...")
         await asyncio.sleep(2.0)
 
-        # Шаг 3 — анализ на основе истории
+        # Шаг 3 — анализ
         if lang == "ru":
             await msg.reply_text(
                 "📊 Я проанализировал ваши данные:\n\n"
@@ -348,35 +571,89 @@ async def button(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await q.message.reply_text(receipt)
         await asyncio.sleep(0.5)
 
-        # Предложение автооплаты после успешного платежа
-        if lang == "ru":
-            autopay_offer = (
-                "🤖 Кстати, я могу делать это автоматически каждый месяц\n\n"
-                "Включить AI-автопилот — и я буду сам:\n"
-                "• проверять начисления\n"
-                "• оплачивать в нужный день\n"
-                "• присылать квитанцию вам 📲"
-            )
+        # Проверяем, остались ли попытки — показываем предложение подписки незаписанным
+        user_row = get_user(uid)
+        if not is_subscribed(user_row):
+            left = trials_left(user_row)
+            if left == 0:
+                # Последняя попытка использована — усиленный оффер
+                if lang == "ru":
+                    sub_offer = (
+                        "⚠️ Пробный период завершён\n\n"
+                        f"Вы использовали все {FREE_TRIAL_LIMIT} бесплатных использования.\n\n"
+                        "Оформите подписку, чтобы продолжить 🤖"
+                    )
+                else:
+                    sub_offer = (
+                        "⚠️ Сынақ кезеңі аяқталды\n\n"
+                        f"Сіз {FREE_TRIAL_LIMIT} тегін мүмкіндіктің барлығын пайдаландыңыз.\n\n"
+                        "Жалғастыру үшін жазылымды рәсімдеңіз 🤖"
+                    )
+                await q.message.reply_text(sub_offer, reply_markup=kb_paywall(lang))
+            else:
+                # Ещё есть попытки — мягкое предложение
+                if lang == "ru":
+                    autopay_offer = (
+                        f"🤖 Кстати, я могу делать это автоматически каждый месяц\n\n"
+                        f"Включить AI-автопилот — и я буду сам:\n"
+                        f"• проверять начисления\n"
+                        f"• оплачивать в нужный день\n"
+                        f"• присылать квитанцию вам 📲\n\n"
+                        f"_(Осталось пробных использований: {left})_"
+                    )
+                else:
+                    autopay_offer = (
+                        f"🤖 Айтпақшы, мен мұны әр ай автоматты түрде жасай аламын\n\n"
+                        f"AI-Автопилотты қосыңыз — мен өзім:\n"
+                        f"• есептеулерді тексеремін\n"
+                        f"• қажетті күні төлеймін\n"
+                        f"• сізге түбіртек жіберемін 📲\n\n"
+                        f"_(Қалған сынақ пайдаланулар: {left})_"
+                    )
+                kb_offer = InlineKeyboardMarkup([
+                    [InlineKeyboardButton(
+                        "💎 Оформить подписку" if lang == "ru" else "💎 Жазылым рәсімдеу",
+                        callback_data="subscribe"
+                    )],
+                    [InlineKeyboardButton(
+                        "🤖 Включить AI-автопилот" if lang == "ru" else "🤖 AI-Автопилотты қосу",
+                        callback_data="autopay"
+                    )],
+                    [InlineKeyboardButton(
+                        "Не сейчас" if lang == "ru" else "Қазір емес",
+                        callback_data="back"
+                    )],
+                ])
+                await q.message.reply_text(autopay_offer, reply_markup=kb_offer)
         else:
-            autopay_offer = (
-                "🤖 Айтпақшы, мен мұны әр ай автоматты түрде жасай аламын\n\n"
-                "AI-Автопилотты қосыңыз — мен өзім:\n"
-                "• есептеулерді тексеремін\n"
-                "• қажетті күні төлеймін\n"
-                "• сізге түбіртек жіберемін 📲"
-            )
-
-        kb_autopay_offer = InlineKeyboardMarkup([
-            [InlineKeyboardButton(
-                "🤖 Включить AI-автопилот" if lang == "ru" else "🤖 AI-Автопилотты қосу",
-                callback_data="autopay"
-            )],
-            [InlineKeyboardButton(
-                "Не сейчас" if lang == "ru" else "Қазір емес",
-                callback_data="back"
-            )],
-        ])
-        await q.message.reply_text(autopay_offer, reply_markup=kb_autopay_offer)
+            # Подписчик — стандартный оффер автопилота
+            if lang == "ru":
+                autopay_offer = (
+                    "🤖 Кстати, я могу делать это автоматически каждый месяц\n\n"
+                    "Включить AI-автопилот — и я буду сам:\n"
+                    "• проверять начисления\n"
+                    "• оплачивать в нужный день\n"
+                    "• присылать квитанцию вам 📲"
+                )
+            else:
+                autopay_offer = (
+                    "🤖 Айтпақшы, мен мұны әр ай автоматты түрде жасай аламын\n\n"
+                    "AI-Автопилотты қосыңыз — мен өзім:\n"
+                    "• есептеулерді тексеремін\n"
+                    "• қажетті күні төлеймін\n"
+                    "• сізге түбіртек жіберемін 📲"
+                )
+            kb_autopay_offer = InlineKeyboardMarkup([
+                [InlineKeyboardButton(
+                    "🤖 Включить AI-автопилот" if lang == "ru" else "🤖 AI-Автопилотты қосу",
+                    callback_data="autopay"
+                )],
+                [InlineKeyboardButton(
+                    "Не сейчас" if lang == "ru" else "Қазір емес",
+                    callback_data="back"
+                )],
+            ])
+            await q.message.reply_text(autopay_offer, reply_markup=kb_autopay_offer)
 
     # ── ОТМЕНА ────────────────────────────
     elif data == "cancel":
@@ -464,8 +741,8 @@ async def button(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 callback_data="back"
             )],
         ])
-
         await msg.edit_text(text, reply_markup=kb_autopay_active)
+
     elif data == "autopay_off":
         if lang == "ru":
             text = (
@@ -480,8 +757,6 @@ async def button(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 "мен күнделікті жұмысты өз мойныма аламын 🤖"
             )
         await q.message.reply_text(text, reply_markup=kb_main(lang))
-
-
 
     # ── СТАТИСТИКА ────────────────────────
     elif data == "stats":
@@ -508,14 +783,21 @@ async def button(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     # ── НАСТРОЙКИ ─────────────────────────
     elif data == "settings":
         lang_label = "Русский 🇷🇺" if lang == "ru" else "Қазақша 🇰🇿"
+        user_row = get_user(uid)
+        sub_status = ("✅ Активна" if is_subscribed(user_row) else
+                      f"🆓 Пробный ({trials_left(user_row)} ост.)" ) if lang == "ru" else \
+                     ("✅ Белсенді" if is_subscribed(user_row) else
+                      f"🆓 Сынақ ({trials_left(user_row)} қалды)")
         if lang == "ru":
             text = (f"⚙️ Настройки\n\n"
                     f"🌐 Язык: {lang_label}\n"
+                    f"💎 Подписка: {sub_status}\n"
                     f"🆔 Ваш ID: {uid}\n\n"
                     f"Для смены языка напишите /start")
         else:
             text = (f"⚙️ Баптаулар\n\n"
                     f"🌐 Тіл: {lang_label}\n"
+                    f"💎 Жазылым: {sub_status}\n"
                     f"🆔 Сіздің ID: {uid}\n\n"
                     f"Тілді өзгерту үшін /start жазыңыз")
         await q.message.reply_text(text, reply_markup=kb_back(lang))
