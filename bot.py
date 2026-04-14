@@ -523,7 +523,7 @@ async def button(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                             f"📄 Квитанция #{random.randint(100000,999999)}\n\n"
                             f"Сумма: {money(total)}\n"
                             f"Дата: {date}\n\n"
-                            f"Мәртебе: Орындалды ✅\n\n"
+                            f"Статус: Выплачен ✅\n\n"
                             f"Спасибо за оплату! 🤖"
                         )
             else:
