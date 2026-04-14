@@ -184,7 +184,7 @@ def kb_lang():
         InlineKeyboardButton("🇰🇿 Қазақша", callback_data="lang_kz"),
     ]])
 
-def kb_subscribe(lang, trial_left=None):
+def kb_subscribe(lang):
     return InlineKeyboardMarkup([[
         InlineKeyboardButton(
             "💎 Оформить подписку" if lang == "ru" else "💎 Жазылым рәсімдеу",
@@ -362,6 +362,8 @@ async def button(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             "🌐 Выберите язык:\nТілді таңдаңыз:",
             reply_markup=kb_lang()
         )
+        return   # 🔥 ВАЖНО
+        
     # ── ЯЗЫК ──────────────────────────────
     if data in ("lang_ru", "lang_kz"):
         lang = "ru" if data == "lang_ru" else "kz"
@@ -382,9 +384,8 @@ async def button(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             await q.edit_message_text(text, reply_markup=kb_main(lang))
         else:
             # Показываем экран подписки
-            lleft = None
             text = greeting + subscribe_screen_text(lang, user_row)
-            await q.edit_message_text(text, reply_markup=kb_subscribe(lang, left))
+            await q.edit_message_text(text, reply_markup=kb_subscribe(lang))
         return
     # ── ПОДПИСКА (ЗАГЛУШКА) ───────────────
     elif data == "subscribe":
